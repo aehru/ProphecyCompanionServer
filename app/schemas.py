@@ -59,6 +59,22 @@ class Hello(Wire):
     char_id: str | None = None
 
 
+class Share(Wire):
+    v: int = 1
+    type: Literal["share"]
+    char_id: str
+    # Tolerant reader (docs/campaign-protocol.md §4): the projection is stored as
+    # opaque JSON, not validated against SharedCharacter, so an older server
+    # accepts a newer app's additive fields. Only "is a JSON object" is enforced.
+    character: dict
+
+
+class Unshare(Wire):
+    v: int = 1
+    type: Literal["unshare"]
+    char_id: str
+
+
 # --- WebSocket: server -> client ---------------------------------------------
 class CampaignInfo(Wire):
     code: str
@@ -90,6 +106,20 @@ class Presence(Wire):
     type: Literal["presence"] = "presence"
     char_id: str
     online: bool
+
+
+class Update(Wire):
+    v: int = 1
+    type: Literal["update"] = "update"
+    char_id: str
+    character: dict
+    updated_at: int
+
+
+class Remove(Wire):
+    v: int = 1
+    type: Literal["remove"] = "remove"
+    char_id: str
 
 
 class Pong(Wire):

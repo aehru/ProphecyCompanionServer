@@ -97,12 +97,135 @@ def test_ping_pong(client: TestClient) -> None:
         assert gm.receive_json()["type"] == "pong"
 
 
-def test_share_is_unsupported_in_phase_1(client: TestClient) -> None:
+def _share(char_id: str, character: dict[str, Any]) -> dict[str, Any]:
+    return {"v": 1, "type": "share", "charId": char_id, "character": character}
+
+
+def test_share_streams_update_to_gm_and_persists(client: TestClient) -> None:
+    code = make_campaign(client)["code"]
+    with client.websocket_connect("/ws") as gm:
+        gm.send_json(_hello_gm(code))
+        gm.receive_json()  # welcome
+        gm.receive_json()  # empty roster
+
+        with client.websocket_connect("/ws") as player:
+            player.send_json(_hello_player(code, "char-uuid-1"))
+            player.receive_json()  # welcome
+            gm.receive_json()  # presence online
+
+            player.send_json(_share("char-uuid-1", {"nom": "Kael", "conditions": ""}))
+            update = gm.receive_json()
+
+        gm.receive_json()  # presence offline
+
+    assert update["type"] == "update"
+    assert update["charId"] == "char-uuid-1"
+    assert update["character"] == {"nom": "Kael", "conditions": ""}
+    assert isinstance(update["updatedAt"], int)
+
+    # Persisted: a fresh GM connection replays it in the roster (disconnect
+    # does NOT purge — only unshare does).
+    with client.websocket_connect("/ws") as gm2:
+        gm2.send_json(_hello_gm(code))
+        gm2.receive_json()
+        roster = gm2.receive_json()
+    assert [e["charId"] for e in roster["characters"]] == ["char-uuid-1"]
+    assert roster["characters"][0]["character"] == {"nom": "Kael", "conditions": ""}
+
+
+def test_share_is_latest_only_upsert(client: TestClient) -> None:
+    code = make_campaign(client)["code"]
+    with client.websocket_connect("/ws") as gm:
+        gm.send_json(_hello_gm(code))
+        gm.receive_json()
+        gm.receive_json()
+
+        with client.websocket_connect("/ws") as player:
+            player.send_json(_hello_player(code, "char-uuid-1"))
+            player.receive_json()
+            gm.receive_json()  # presence
+
+            player.send_json(_share("char-uuid-1", {"nom": "Kael", "pv": 10}))
+            gm.receive_json()
+            player.send_json(_share("char-uuid-1", {"nom": "Kael", "pv": 7}))
+            second = gm.receive_json()
+
+    assert second["character"] == {"nom": "Kael", "pv": 7}
+    with client.websocket_connect("/ws") as gm2:
+        gm2.send_json(_hello_gm(code))
+        gm2.receive_json()
+        roster = gm2.receive_json()
+    assert len(roster["characters"]) == 1
+    assert roster["characters"][0]["character"] == {"nom": "Kael", "pv": 7}
+
+
+def test_unshare_purges_and_notifies_gm(client: TestClient) -> None:
+    code = make_campaign(client)["code"]
+    with client.websocket_connect("/ws") as gm:
+        gm.send_json(_hello_gm(code))
+        gm.receive_json()
+        gm.receive_json()
+
+        with client.websocket_connect("/ws") as player:
+            player.send_json(_hello_player(code, "char-uuid-1"))
+            player.receive_json()
+            gm.receive_json()  # presence
+
+            player.send_json(_share("char-uuid-1", {"nom": "Kael"}))
+            gm.receive_json()  # update
+            player.send_json({"v": 1, "type": "unshare", "charId": "char-uuid-1"})
+            removed = gm.receive_json()
+
+    assert removed == {"v": 1, "type": "remove", "charId": "char-uuid-1"}
+    with client.websocket_connect("/ws") as gm2:
+        gm2.send_json(_hello_gm(code))
+        gm2.receive_json()
+        roster = gm2.receive_json()
+    assert roster["characters"] == []
+
+
+def test_share_other_slot_forbidden(client: TestClient) -> None:
     code = make_campaign(client)["code"]
     with client.websocket_connect("/ws") as player:
         player.send_json(_hello_player(code, "char-uuid-1"))
-        player.receive_json()  # welcome
-        player.send_json({"v": 1, "type": "share", "charId": "char-uuid-1", "character": {}})
+        player.receive_json()
+        player.send_json(_share("char-uuid-STOLEN", {"nom": "Voleur"}))
         err = player.receive_json()
     assert err["type"] == "error"
-    assert err["code"] == "unsupported"
+    assert err["code"] == "forbidden"
+
+
+def test_gm_cannot_share(client: TestClient) -> None:
+    code = make_campaign(client)["code"]
+    with client.websocket_connect("/ws") as gm:
+        gm.send_json(_hello_gm(code))
+        gm.receive_json()
+        gm.receive_json()
+        gm.send_json(_share("char-uuid-1", {"nom": "MJ"}))
+        err = gm.receive_json()
+    assert err["type"] == "error"
+    assert err["code"] == "forbidden"
+
+
+def test_oversized_frame_rejected(client: TestClient) -> None:
+    code = make_campaign(client)["code"]
+    with client.websocket_connect("/ws") as player:
+        player.send_json(_hello_player(code, "char-uuid-1"))
+        player.receive_json()
+        big = "x" * (64 * 1024 + 1)
+        player.send_json(_share("char-uuid-1", {"nom": big}))
+        err = player.receive_json()
+    assert err["type"] == "error"
+    assert err["code"] == "too_big"
+
+
+def test_invalid_share_payload_rejected(client: TestClient) -> None:
+    code = make_campaign(client)["code"]
+    with client.websocket_connect("/ws") as player:
+        player.send_json(_hello_player(code, "char-uuid-1"))
+        player.receive_json()
+        # `character` must be a JSON object.
+        player.send_json({"v": 1, "type": "share", "charId": "char-uuid-1", "character": 42})
+        err = player.receive_json()
+    assert err["type"] == "error"
+    assert err["code"] == "bad_share"

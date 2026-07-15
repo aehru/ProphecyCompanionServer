@@ -17,8 +17,14 @@ def gen_code(length: int) -> str:
 def hash_token(token: str) -> str:
     """SHA-256 hex. A fast hash is correct here: the GM token is a random 128-bit
     value, so a slow password KDF (bcrypt/argon2) would guard entropy it doesn't
-    have. Compare with `secrets.compare_digest`."""
+    have. Never compare the result yourself — go through `verify_token`."""
     return hashlib.sha256(token.encode()).hexdigest()
+
+
+def verify_token(token: str, token_hash: str) -> bool:
+    """THE one way to check a presented GM token against the stored hash —
+    timing-safe, and a single choke point so REST and WS can't drift apart."""
+    return secrets.compare_digest(hash_token(token), token_hash)
 
 
 async def gen_unique_code(session: AsyncSession, length: int) -> str:

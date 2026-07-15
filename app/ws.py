@@ -20,7 +20,7 @@ from sqlalchemy import CursorResult, delete, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.codes import hash_token
+from app.codes import verify_token
 from app.config import settings
 from app.models import Campaign, Projection, now_ms
 from app.schemas import (
@@ -145,7 +145,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 return
 
             if hello.role == "gm":
-                if not hello.gm_token or hash_token(hello.gm_token) != campaign.gm_token_hash:
+                if not hello.gm_token or not verify_token(hello.gm_token, campaign.gm_token_hash):
                     await _error(ws, "forbidden", "Bad GM token.")
                     await ws.close()
                     return

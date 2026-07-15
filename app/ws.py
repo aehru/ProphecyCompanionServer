@@ -71,9 +71,17 @@ class RoomManager:
     def online_char_ids(self, code: str) -> set[str]:
         return {m.char_id for m in self._rooms.get(code, set()) if m.char_id is not None}
 
-    async def notify_gms(self, code: str, message: dict) -> None:
-        for gm in self.gms(code):
-            await gm.ws.send_json(message)
+    async def notify_gms(self, code: str, message: BaseModel) -> None:
+        """Broadcast to every live GM. A failed send means a dead socket (app
+        backgrounded, network drop mid-write): evict it instead of letting the
+        exception propagate into the SENDING player's handler and kill their
+        connection. The GM's own endpoint finishes cleanup on its next receive."""
+        payload = message.model_dump(by_alias=True)
+        for gm in self.gms(code):  # gms() returns a copy — safe to evict while iterating
+            try:
+                await gm.ws.send_json(payload)
+            except Exception:
+                self.remove(code, gm)
 
 
 manager = RoomManager()
@@ -156,9 +164,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
             if hello.role == "gm":
                 await _send(ws, await _build_roster(session, campaign.id, code))
             else:
-                await manager.notify_gms(
-                    code, Presence(char_id=hello.char_id, online=True).model_dump(by_alias=True)
-                )
+                await manager.notify_gms(code, Presence(char_id=hello.char_id, online=True))
 
         # Main loop.
         while True:
@@ -182,9 +188,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
         if code and member:
             manager.remove(code, member)
             if member.role == "player" and member.char_id is not None:
-                await manager.notify_gms(
-                    code, Presence(char_id=member.char_id, online=False).model_dump(by_alias=True)
-                )
+                await manager.notify_gms(code, Presence(char_id=member.char_id, online=False))
 
 
 async def _handle_share(
@@ -224,10 +228,7 @@ async def _handle_share(
         await session.commit()
 
     await manager.notify_gms(
-        code,
-        Update(char_id=share.char_id, character=share.character, updated_at=ts).model_dump(
-            by_alias=True
-        ),
+        code, Update(char_id=share.char_id, character=share.character, updated_at=ts)
     )
 
 
@@ -262,9 +263,7 @@ async def _handle_unshare(
     deleted = cast(CursorResult[Any], result).rowcount
     # Idempotent: unsharing a slot that holds nothing is a no-op, not an error.
     if deleted:
-        await manager.notify_gms(
-            code, Remove(char_id=unshare.char_id).model_dump(by_alias=True)
-        )
+        await manager.notify_gms(code, Remove(char_id=unshare.char_id))
 
 
 async def _build_roster(session: AsyncSession, campaign_id: int, code: str) -> Roster:

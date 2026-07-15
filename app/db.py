@@ -1,5 +1,6 @@
 import pathlib
 from collections.abc import AsyncIterator
+from typing import Any
 
 from fastapi import Request
 from sqlalchemy import event
@@ -31,7 +32,7 @@ def build_engine(url: str) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession
     if url.startswith("sqlite"):
 
         @event.listens_for(engine.sync_engine, "connect")
-        def _sqlite_pragmas(dbapi_conn, _record):  # noqa: ANN001
+        def _sqlite_pragmas(dbapi_conn: Any, _record: Any) -> None:
             cur = dbapi_conn.cursor()
             cur.execute("PRAGMA journal_mode=WAL")
             cur.execute("PRAGMA foreign_keys=ON")

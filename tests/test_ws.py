@@ -1,21 +1,24 @@
 import json
 import sqlite3
 import time
+from typing import Any
+
+from starlette.testclient import TestClient
 
 from tests.conftest import make_campaign
 
 TOKEN = "gm-secret-token"
 
 
-def _hello_gm(code, token=TOKEN):
+def _hello_gm(code: str, token: str = TOKEN) -> dict[str, Any]:
     return {"v": 1, "type": "hello", "role": "gm", "code": code, "gmToken": token}
 
 
-def _hello_player(code, char_id):
+def _hello_player(code: str, char_id: str) -> dict[str, Any]:
     return {"v": 1, "type": "hello", "role": "player", "code": code, "charId": char_id}
 
 
-def test_gm_hello_gets_welcome_then_empty_roster(client):
+def test_gm_hello_gets_welcome_then_empty_roster(client: TestClient) -> None:
     code = make_campaign(client, name="Table A")["code"]
     with client.websocket_connect("/ws") as gm:
         gm.send_json(_hello_gm(code))
@@ -27,7 +30,7 @@ def test_gm_hello_gets_welcome_then_empty_roster(client):
     assert roster["characters"] == []
 
 
-def test_gm_bad_token_rejected(client):
+def test_gm_bad_token_rejected(client: TestClient) -> None:
     code = make_campaign(client)["code"]
     with client.websocket_connect("/ws") as ws:
         ws.send_json(_hello_gm(code, token="nope"))
@@ -36,7 +39,7 @@ def test_gm_bad_token_rejected(client):
     assert err["code"] == "forbidden"
 
 
-def test_unknown_campaign_rejected(client):
+def test_unknown_campaign_rejected(client: TestClient) -> None:
     with client.websocket_connect("/ws") as ws:
         ws.send_json(_hello_gm("ZZZZZZZZ"))
         err = ws.receive_json()
@@ -44,7 +47,7 @@ def test_unknown_campaign_rejected(client):
     assert err["code"] == "no_campaign"
 
 
-def test_player_join_and_leave_pings_gm_presence(client):
+def test_player_join_and_leave_pings_gm_presence(client: TestClient) -> None:
     code = make_campaign(client)["code"]
     with client.websocket_connect("/ws") as gm:
         gm.send_json(_hello_gm(code))
@@ -61,7 +64,7 @@ def test_player_join_and_leave_pings_gm_presence(client):
         assert offline == {"v": 1, "type": "presence", "charId": "char-uuid-1", "online": False}
 
 
-def test_roster_reflects_a_stored_projection(client, db_file):
+def test_roster_reflects_a_stored_projection(client: TestClient, db_file: str) -> None:
     body = make_campaign(client)
     # No `share` handler in Phase 1 — seed the projection row directly.
     con = sqlite3.connect(db_file)
@@ -84,7 +87,7 @@ def test_roster_reflects_a_stored_projection(client, db_file):
     assert entry["online"] is False
 
 
-def test_ping_pong(client):
+def test_ping_pong(client: TestClient) -> None:
     code = make_campaign(client)["code"]
     with client.websocket_connect("/ws") as gm:
         gm.send_json(_hello_gm(code))
@@ -94,7 +97,7 @@ def test_ping_pong(client):
         assert gm.receive_json()["type"] == "pong"
 
 
-def test_share_is_unsupported_in_phase_1(client):
+def test_share_is_unsupported_in_phase_1(client: TestClient) -> None:
     code = make_campaign(client)["code"]
     with client.websocket_connect("/ws") as player:
         player.send_json(_hello_player(code, "char-uuid-1"))

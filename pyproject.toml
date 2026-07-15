@@ -19,6 +19,7 @@ dev = [
     "pytest>=8.3",
     "httpx>=0.28",
     "ruff>=0.8",
+    "mypy>=1.13",
 ]
 
 [tool.uv]
@@ -33,4 +34,27 @@ line-length = 100
 target-version = "py314"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "ASYNC"]
+# ANN = flake8-annotations: every function argument and return must be typed.
+select = ["E", "F", "I", "UP", "B", "ASYNC", "ANN"]
+# ANN401 bans `Any` outright — too strict where a third-party callback genuinely
+# hands us an untyped object (e.g. the raw DBAPI connection).
+ignore = ["ANN401"]
+
+# Ruff's ANN only checks that annotations EXIST; mypy checks they're TRUE.
+# Both are needed — neither replaces the other.
+[tool.mypy]
+python_version = "3.14"
+files = ["app", "tests", "migrations"]
+# The core of "enforce type declarations": no silently untyped function bodies.
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+# Alembic's generated env/versions modules aren't import-followable as a package.
+module = "migrations.*"
+ignore_errors = true

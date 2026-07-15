@@ -13,8 +13,9 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.codes import hash_token
 from app.models import Campaign, Projection
@@ -70,7 +71,7 @@ class RoomManager:
 manager = RoomManager()
 
 
-async def _send(ws: WebSocket, model) -> None:  # noqa: ANN001
+async def _send(ws: WebSocket, model: BaseModel) -> None:
     await ws.send_json(model.model_dump(by_alias=True))
 
 
@@ -144,7 +145,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 )
 
 
-async def _build_roster(session, campaign_id: int, code: str) -> Roster:  # noqa: ANN001
+async def _build_roster(session: AsyncSession, campaign_id: int, code: str) -> Roster:
     rows = (
         await session.scalars(select(Projection).where(Projection.campaign_id == campaign_id))
     ).all()

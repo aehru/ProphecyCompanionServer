@@ -9,18 +9,24 @@ character sheet never leaves the player's device — see the app repo's
 Self-hostable: it's a single service with an embedded SQLite database, so a group
 can run it on their own box (`docker compose up`) and keep their data in-house.
 
-## Status — Phase 1
+## Status — Phase 2
 
 Implemented:
 
 - `POST /campaigns` → `{ campaignId, code }` (stores only a hash of the GM token)
 - `DELETE /campaigns/{code}` (GM token required; cascades projections)
 - `GET /healthz`
-- `WS /ws` — `hello` → `welcome`, GM receives the persisted `roster`, players
-  announce `presence`, `ping`/`pong`.
+- `WS /ws` — `hello` → `welcome`, GM receives the persisted `roster` then a live
+  `update` / `remove` / `presence` stream; players `share` their latest
+  projection (latest-only UPSERT, no history) and withdraw it with `unshare`
+  (purges the row — disconnecting alone does not); `ping`/`pong`.
+- A socket is bound to one roster slot at `hello`: a player can only
+  share/unshare the `charId` they joined with, and a GM can't share at all.
+- Frames over `PCS_MAX_MESSAGE_BYTES` (default 64 KiB) are rejected before
+  parsing.
 
-Not yet (Phase 2): `share` / `unshare` / `update` / `remove` — the projection
-write path. `share`/`unshare` currently return an `error` frame.
+Next: rate limiting, idle-campaign retention, and the app-side client (app
+repo Phase 3).
 
 ## Stack
 

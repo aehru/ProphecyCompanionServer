@@ -1,0 +1,37 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "alembic: upgrade head",
+      "type": "shell",
+      "command": "uv run alembic upgrade head",
+      "problemMatcher": [],
+      "presentation": { "reveal": "silent", "panel": "shared", "clear": true }
+    },
+    {
+      "label": "pytest",
+      "type": "shell",
+      "command": "uv run pytest -q",
+      "group": { "kind": "test", "isDefault": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "ruff: check",
+      "type": "shell",
+      "command": "uv run ruff check .",
+      "problemMatcher": []
+    },
+    {
+      "label": "ruff: format",
+      "type": "shell",
+      "command": "uv run ruff format .",
+      "problemMatcher": []
+    },
+    {
+      "label": "uv: sync",
+      "type": "shell",
+      "command": "uv sync",
+      "problemMatcher": []
+    }
+  ]
+}

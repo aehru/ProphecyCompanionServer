@@ -34,9 +34,20 @@ uv sync                         # install (incl. dev tools)
 uv run alembic upgrade head     # create/upgrade the SQLite schema
 uv run uvicorn app.main:app --reload
 uv run pytest                   # tests (use their own throwaway DB)
-uv run ruff check .             # lint
+uv run ruff check .             # lint (incl. annotation rules)
 uv run ruff format .            # format
+uv run mypy                     # type gate
 ```
+
+### Typing policy
+
+Type annotations are **enforced on every function** — arguments and returns.
+Two tools, deliberately, because they check different things:
+
+- **ruff `ANN`** — that annotations *exist* (`def f(x):` is rejected).
+- **mypy** (`disallow_untyped_defs`) — that annotations are *true*
+  (`def f(x: int) -> str: return x` is rejected) and that inferred local types
+  line up.
 
 Tests don't need Alembic: they build the schema from the models via the
 `PCS_AUTO_CREATE` flag against a temp database.

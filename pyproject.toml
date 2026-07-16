@@ -28,6 +28,9 @@ package = false
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+# A wedged WebSocket receive would otherwise hang forever: dump every thread's
+# traceback after 30s so the culprit line is visible immediately.
+faulthandler_timeout = 30
 
 [tool.ruff]
 line-length = 100

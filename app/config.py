@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     code_length: int = 8
     # Reject oversized WS frames before parsing.
     max_message_bytes: int = 64 * 1024
+    # Refuse NEW roster slots beyond this many per campaign (updating an existing
+    # slot always passes). Guards against a code-holder looping random charIds to
+    # fill the disk; generous vs a real table of 4-6 players.
+    max_projections_per_campaign: int = 16
 
 
 settings = Settings()

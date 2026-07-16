@@ -219,6 +219,45 @@ def test_oversized_frame_rejected(client: TestClient) -> None:
     assert err["code"] == "too_big"
 
 
+def test_projection_cap_blocks_new_slots_not_updates(client: TestClient) -> None:
+    # PCS_MAX_PROJECTIONS_PER_CAMPAIGN=3 (conftest).
+    code = make_campaign(client)["code"]
+    for i in range(3):
+        with client.websocket_connect("/ws") as player:
+            player.send_json(_hello_player(code, f"char-{i}"))
+            player.receive_json()
+            player.send_json(_share(f"char-{i}", {"nom": f"P{i}"}))
+            # Barrier: frames are handled in order, so pong proves the share
+            # was processed before we close and move on (no fire-and-forget race).
+            player.send_json({"v": 1, "type": "ping"})
+            assert player.receive_json()["type"] == "pong"
+
+    with client.websocket_connect("/ws") as player:
+        # Slot 4 is refused…
+        player.send_json(_hello_player(code, "char-overflow"))
+        player.receive_json()
+        player.send_json(_share("char-overflow", {"nom": "Trop"}))
+        err = player.receive_json()
+    assert err["type"] == "error"
+    assert err["code"] == "campaign_full"
+
+    with client.websocket_connect("/ws") as player:
+        # …but updating an existing slot at capacity still passes.
+        player.send_json(_hello_player(code, "char-0"))
+        player.receive_json()
+        player.send_json(_share("char-0", {"nom": "P0", "pv": 5}))
+        player.send_json({"v": 1, "type": "ping"})
+        assert player.receive_json()["type"] == "pong"  # no error frame came first
+
+    with client.websocket_connect("/ws") as gm:
+        gm.send_json(_hello_gm(code))
+        gm.receive_json()
+        roster = gm.receive_json()
+    assert len(roster["characters"]) == 3
+    by_id = {e["charId"]: e["character"] for e in roster["characters"]}
+    assert by_id["char-0"] == {"nom": "P0", "pv": 5}
+
+
 def test_invalid_share_payload_rejected(client: TestClient) -> None:
     code = make_campaign(client)["code"]
     with client.websocket_connect("/ws") as player:

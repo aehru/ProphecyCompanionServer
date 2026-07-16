@@ -8,6 +8,8 @@ _TMPDIR = pathlib.Path(tempfile.mkdtemp(prefix="pcs-test-"))
 _DBFILE = _TMPDIR / "test.db"
 os.environ["PCS_DATABASE_URL"] = f"sqlite+aiosqlite:///{_DBFILE.as_posix()}"
 os.environ["PCS_AUTO_CREATE"] = "true"
+# Small limits so the cap tests stay fast. Every other test must fit under them.
+os.environ["PCS_MAX_PROJECTIONS_PER_CAMPAIGN"] = "3"
 
 from collections.abc import Iterator  # noqa: E402
 from typing import Any  # noqa: E402

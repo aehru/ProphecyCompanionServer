@@ -16,7 +16,7 @@ from typing import Any, cast
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import CursorResult, delete, select
+from sqlalchemy import CursorResult, delete, func, select
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -214,6 +214,22 @@ async def _handle_share(
     ts = now_ms()
     payload = json.dumps(share.character, ensure_ascii=False, separators=(",", ":"))
     async with maker() as session:
+        # A NEW slot is refused once the campaign is at capacity; an update of an
+        # existing slot always passes (the cap bounds rows, not writes).
+        exists = await session.scalar(
+            select(Projection.char_id).where(
+                Projection.campaign_id == campaign_id, Projection.char_id == share.char_id
+            )
+        )
+        if exists is None:
+            count = await session.scalar(
+                select(func.count())
+                .select_from(Projection)
+                .where(Projection.campaign_id == campaign_id)
+            )
+            if (count or 0) >= settings.max_projections_per_campaign:
+                await _error(ws, "campaign_full", "This campaign's roster is full.")
+                return
         # SQLite-dialect upsert — matches the shipped engine. A postgres deploy
         # (see config.database_url) needs the pg dialect's insert here.
         stmt = (

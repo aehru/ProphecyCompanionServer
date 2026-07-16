@@ -37,3 +37,11 @@ def test_delete_wrong_token_forbidden(client: TestClient) -> None:
 def test_delete_unknown_code_not_found(client: TestClient) -> None:
     r = client.request("DELETE", "/campaigns/ZZZZZZZZ", json={"gmToken": "whatever"})
     assert r.status_code == 404
+
+
+def test_create_is_rate_limited_per_ip(client: TestClient) -> None:
+    # PCS_CREATE_LIMIT_PER_HOUR=5 (conftest); the limiter is fresh per test.
+    for _ in range(5):
+        make_campaign(client)
+    r = client.post("/campaigns", json={"name": "Flood", "gmToken": "t"})
+    assert r.status_code == 429

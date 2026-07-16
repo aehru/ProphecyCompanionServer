@@ -1,6 +1,6 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -16,7 +16,14 @@ SessionDep = Annotated[AsyncSession, Depends(get_session)]
 
 
 @router.post("/campaigns", status_code=201, response_model=CreateCampaignOut)
-async def create_campaign(body: CreateCampaignIn, session: SessionDep) -> CreateCampaignOut:
+async def create_campaign(
+    body: CreateCampaignIn, session: SessionDep, request: Request
+) -> CreateCampaignOut:
+    # Keyed on the socket peer IP — behind a reverse proxy that's the proxy
+    # until forwarded headers are handled (TODO.md).
+    ip = request.client.host if request.client else "unknown"
+    if not request.app.state.create_limiter.allow(ip):
+        raise HTTPException(status_code=429, detail="Too many campaigns created; retry later.")
     code = await gen_unique_code(session, settings.code_length)
     campaign = Campaign(code=code, name=body.name, gm_token_hash=hash_token(body.gm_token))
     session.add(campaign)

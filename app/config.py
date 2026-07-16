@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     # slot always passes). Guards against a code-holder looping random charIds to
     # fill the disk; generous vs a real table of 4-6 players.
     max_projections_per_campaign: int = 16
+    # Sliding-window cap on POST /campaigns per client IP — the endpoint is
+    # unauthenticated, so without this anyone can flood the DB. Generous vs a
+    # human GM creating a handful of campaigns.
+    create_limit_per_hour: int = 20
 
 
 settings = Settings()

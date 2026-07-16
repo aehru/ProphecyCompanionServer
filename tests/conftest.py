@@ -9,7 +9,10 @@ _DBFILE = _TMPDIR / "test.db"
 os.environ["PCS_DATABASE_URL"] = f"sqlite+aiosqlite:///{_DBFILE.as_posix()}"
 os.environ["PCS_AUTO_CREATE"] = "true"
 # Small limits so the cap tests stay fast. Every other test must fit under them.
+# (The create limiter is rebuilt per test: it lives in the lifespan, and the
+# `client` fixture runs the lifespan per test.)
 os.environ["PCS_MAX_PROJECTIONS_PER_CAMPAIGN"] = "3"
+os.environ["PCS_CREATE_LIMIT_PER_HOUR"] = "5"
 
 from collections.abc import Iterator  # noqa: E402
 from typing import Any  # noqa: E402

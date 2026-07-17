@@ -23,6 +23,22 @@ class Initiative(Wire):
     values: list[int]
 
 
+class SharedSkill(Wire):
+    name: str
+    attribut: str
+    value: int
+    parent_name: str | None = None
+    spec_label: str | None = None
+
+
+class SharedEffect(Wire):
+    label: str
+    target: str
+    value: int
+    duration_unit: str
+    duration_remaining: int
+
+
 class SharedCharacter(Wire):
     nom: str
     caracteristiques: dict[str, int]
@@ -32,6 +48,10 @@ class SharedCharacter(Wire):
     resources: dict[str, Pool]
     initiative: Initiative
     conditions: str
+    # v2 (SHARED_SCHEMA_VERSION=2): trained skills (value>0) + active (non-expired)
+    # bonus/malus effects. Additive — the projection is still stored opaquely.
+    skills: list[SharedSkill] = []
+    effects: list[SharedEffect] = []
 
 
 # --- REST --------------------------------------------------------------------

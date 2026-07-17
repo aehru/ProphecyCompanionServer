@@ -83,12 +83,32 @@ All settings are env vars with a `PCS_` prefix (or a `.env` file):
 | `PCS_MAX_MESSAGE_BYTES` | `65536` | Max accepted WS frame size. |
 | `PCS_HOST` / `PCS_PORT` | `0.0.0.0` / `8000` | Bind address. |
 
-## Deploy (self-host)
+## Deploy
+
+### LAN self-host (game table, no domain)
 
 ```bash
 docker compose up -d
 ```
 
-The container runs `alembic upgrade head` then serves on `:8000`. SQLite lives on
-the `pcs-data` volume. **TLS:** terminate `wss://`/`https://` at a reverse proxy
-(Caddy/nginx) in front — iOS blocks cleartext WebSocket connections.
+Serves plain HTTP/WS on `:8000`. The app connects with `ws://` — fine on a
+private LAN (players enter `192.168.x.x:8000` as the server). The container runs
+`alembic upgrade head` then uvicorn; SQLite lives on the `pcs-data` volume; a
+`HEALTHCHECK` probes `/healthz`.
+
+### Public instance (domain + TLS)
+
+iOS blocks cleartext WebSockets, so a public instance MUST sit behind TLS. The
+production compose bundles [Caddy](https://caddyserver.com/) which fetches and
+renews the Let's Encrypt certificate automatically and proxies WebSockets:
+
+```bash
+# DNS A record for the domain must point at this machine; ports 80/443 open.
+PCS_DOMAIN=play.example.org docker compose -f docker-compose.prod.yml up -d
+```
+
+Players then enter `play.example.org` in the app (it picks `wss://` itself).
+The app server stays unpublished — only Caddy is exposed.
+
+Updating: `git pull && PCS_DOMAIN=... docker compose -f docker-compose.prod.yml up -d --build`
+(migrations run on start).

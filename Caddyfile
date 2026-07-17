@@ -1,0 +1,6 @@
+# TLS termination for the campaign server. Caddy fetches/renews the Let's
+# Encrypt certificate automatically and proxies WebSocket upgrades natively —
+# no extra config needed for /ws.
+{$PCS_DOMAIN} {
+	reverse_proxy server:8000
+}

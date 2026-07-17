@@ -1,0 +1,39 @@
+# Production deployment: the server behind Caddy, which terminates TLS with an
+# automatic Let's Encrypt certificate and proxies WebSockets natively. This is
+# what the hosted community instance runs; a self-hosting group with a domain
+# can use it as-is.
+#
+#   PCS_DOMAIN=play.example.org docker compose -f docker-compose.prod.yml up -d
+#
+# Requirements: DNS A/AAAA record for $PCS_DOMAIN pointing at this machine, and
+# ports 80+443 reachable (Let's Encrypt HTTP challenge + HTTPS).
+# LAN self-host without a domain/TLS: use the plain docker-compose.yml instead.
+
+services:
+  server:
+    build: .
+    expose:
+      - "8000"          # reachable by caddy only — never published directly
+    volumes:
+      - pcs-data:/data
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      PCS_DOMAIN: ${PCS_DOMAIN:?set PCS_DOMAIN to your server's domain name}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    restart: unless-stopped
+    depends_on:
+      - server
+
+volumes:
+  pcs-data:
+  caddy-data:
+  caddy-config:

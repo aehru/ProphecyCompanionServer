@@ -29,10 +29,9 @@ these remain, roughly ordered by value.
 
 ## Ops
 
-- [ ] **Dockerfile `HEALTHCHECK`** hitting `/healthz`.
-- [ ] **README: hosted instance must sit behind a TLS proxy** (iOS ATS blocks
-  cleartext `ws://`); compose publishes plain `:8000` which is fine for LAN
-  self-host only.
+- [x] **Dockerfile `HEALTHCHECK`** hitting `/healthz`.
+- [x] **TLS deployment** — `docker-compose.prod.yml` + `Caddyfile` (auto Let's
+  Encrypt, WS proxying); README deploy section split LAN vs public.
 
 ## Code quality (minor)
 

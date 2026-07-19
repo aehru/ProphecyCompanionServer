@@ -245,7 +245,17 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     duration_s=round(time.monotonic() - member.connected_at, 1),
                 )
             )
-            if member.role == "player" and member.char_id is not None:
+            # Only report the slot offline if NO other live socket still holds it.
+            # A mobile client that reconnects (screen lock, network blip) opens a
+            # new socket before the server notices the old half-open one died; the
+            # stale socket's cleanup then lands AFTER the new hello. Broadcasting
+            # unconditionally would mark a connected, actively-sharing player
+            # offline — and nothing would ever flip them back.
+            if (
+                member.role == "player"
+                and member.char_id is not None
+                and member.char_id not in manager.online_char_ids(code)
+            ):
                 await manager.notify_gms(code, Presence(char_id=member.char_id, online=False))
 
 

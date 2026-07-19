@@ -64,6 +64,47 @@ def test_player_join_and_leave_pings_gm_presence(client: TestClient) -> None:
         assert offline == {"v": 1, "type": "presence", "charId": "char-uuid-1", "online": False}
 
 
+def test_reconnect_does_not_report_the_slot_offline(client: TestClient) -> None:
+    """A second socket for the same charId takes over the slot: when the FIRST
+    one closes afterwards, the GM must not be told the player went offline —
+    someone is still holding that slot. This is the reconnect race a mobile
+    client hits on screen lock / network blip."""
+    code = make_campaign(client)["code"]
+    with client.websocket_connect("/ws") as gm:
+        gm.send_json(_hello_gm(code))
+        gm.receive_json()  # welcome
+        gm.receive_json()  # empty roster
+
+        old = client.websocket_connect("/ws")
+        old.__enter__()
+        old.send_json(_hello_player(code, "char-uuid-1"))
+        old.receive_json()  # welcome
+        assert gm.receive_json()["online"] is True
+
+        # The reconnect lands while the old socket is still registered.
+        with client.websocket_connect("/ws") as new:
+            new.send_json(_hello_player(code, "char-uuid-1"))
+            new.receive_json()  # welcome
+            assert gm.receive_json()["online"] is True
+
+            # Now the stale socket finally closes — this must stay silent.
+            old.__exit__(None, None, None)
+
+            # Prove nothing was queued for the GM: a fresh ping round-trips first.
+            new.send_json({"v": 1, "type": "ping"})
+            assert new.receive_json()["type"] == "pong"
+            gm.send_json({"v": 1, "type": "ping"})
+            assert gm.receive_json() == {"v": 1, "type": "pong"}
+
+        # Only the LAST holder leaving reports the slot offline.
+        assert gm.receive_json() == {
+            "v": 1,
+            "type": "presence",
+            "charId": "char-uuid-1",
+            "online": False,
+        }
+
+
 def test_roster_reflects_a_stored_projection(client: TestClient, db_file: str) -> None:
     body = make_campaign(client)
     # No `share` handler in Phase 1 — seed the projection row directly.

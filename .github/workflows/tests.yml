@@ -1,0 +1,48 @@
+name: tests
+
+# Two ways in:
+#   - every PR targeting main or dev, so a red branch is caught before merge;
+#   - called by docker.yml, so the image is never published from a red tree.
+on:
+  pull_request:
+    branches: [main, dev]
+  workflow_call:
+
+# One run per branch. A new push supersedes the in-flight run instead of
+# queueing behind it.
+concurrency:
+  group: tests-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # requires-python is >=3.14; uv fetches the interpreter itself.
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      # Same three gates as local dev, in the same order (see pyproject.toml:
+      # ruff checks annotations EXIST, mypy checks they're true).
+      - name: ruff format
+        run: uv run ruff format --check .
+
+      - name: ruff lint
+        run: uv run ruff check .
+
+      - name: mypy
+        run: uv run mypy
+
+      - name: pytest
+        run: uv run pytest -q

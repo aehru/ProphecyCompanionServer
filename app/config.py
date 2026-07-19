@@ -16,6 +16,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8000
 
+    # Root log level. DEBUG locally, INFO in prod; raising it needs no redeploy
+    # of code, only of the env var.
+    log_level: str = "INFO"
+
     # Join-code length in Crockford base32 chars (8 ≈ 40 bits).
     code_length: int = 8
     # Reject oversized WS frames before parsing.

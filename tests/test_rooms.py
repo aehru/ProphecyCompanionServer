@@ -23,7 +23,7 @@ class FakeWS:
 
 
 def _gm(dead: bool = False) -> Member:
-    return Member(ws=cast(WebSocket, FakeWS(dead=dead)), role="gm", char_id=None)
+    return Member(ws=cast(WebSocket, FakeWS(dead=dead)), role="gm", char_id=None, campaign_id=1)
 
 
 def test_dead_gm_is_evicted_and_live_gm_still_notified() -> None:

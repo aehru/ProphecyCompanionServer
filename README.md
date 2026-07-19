@@ -82,6 +82,31 @@ All settings are env vars with a `PCS_` prefix (or a `.env` file):
 | `PCS_CODE_LENGTH` | `8` | Join-code length (Crockford base32). |
 | `PCS_MAX_MESSAGE_BYTES` | `65536` | Max accepted WS frame size. |
 | `PCS_HOST` / `PCS_PORT` | `0.0.0.0` / `8000` | Bind address. |
+| `PCS_LOG_LEVEL` | `INFO` | Root log level. `DEBUG` locally; raising it needs no code change. |
+
+## Logging
+
+Plain single lines on stdout only — `docker compose logs -f` is the reader, and
+the container runtime owns rotation. Each event carries a `key=value` tail:
+
+```
+2026-07-19T14:30:22 INFO  app.ws share campaign_id=1 char=aaaaaa~ new_slot=True bytes=14
+2026-07-19T14:30:22 WARNING app.ws bad_gm_token campaign_id=1 ip=10.0.0.7 via=ws
+```
+
+Two values are capabilities, not identifiers, and never appear in full:
+
+- the **join code** — whoever holds it joins the campaign, so lines carry the
+  internal `campaign_id` instead;
+- **`charId`** — the charUuid is the write capability for a roster slot, so it
+  is truncated to 6 chars (`aaaaaa~`).
+
+GM tokens and character payloads are never logged at all; a `share` line records
+only the payload's byte count.
+
+Client IPs *are* logged, for the abuse trail (`create_rate_limited`,
+`bad_gm_token`, `unknown_campaign`). Behind the prod reverse proxy that is
+currently the proxy's IP, not the client's — see TODO.md on forwarded headers.
 
 ## Deploy
 

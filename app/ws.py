@@ -1,14 +1,18 @@
 """WebSocket endpoint + in-memory room manager.
 
-`hello` -> `welcome`; the GM gets the persisted `roster` and then a live
-`update`/`remove`/`presence` stream; a player pushes its latest projection with
-`share` (latest-only UPSERT — no history) and withdraws it with `unshare`.
-`ping`/`pong` keeps the socket warm.
+`hello` (v2: identifies the session, not a character) -> `welcome`; the GM gets
+the persisted `roster` and then a live `update`/`remove`/`presence` stream; any
+member pushes projections with `share` (latest-only UPSERT — no history, one
+socket may hold N characters) and withdraws them with `unshare`. A GM sharing =
+a GM-run PNJ (`owner="gm"` on the wire); a GM unsharing another member's entry =
+kick (purge only — the player's next share re-adds it). `ping`/`pong` keeps the
+socket warm.
 
 Rooms and presence are in-memory only (they die with the process); the durable
 truth is the `projections` table, so a GM reconnect replays a whole roster.
 """
 
+import asyncio
 import json
 import logging
 import time
@@ -49,10 +53,12 @@ log = logging.getLogger(__name__)
 class Member:
     ws: WebSocket
     role: str
-    char_id: str | None
     # Carried on the member so room-level logging never has to name the join
     # code (which is the campaign's join capability).
     campaign_id: int
+    # v2: the characters this socket currently shares — filled by `share`,
+    # drained by `unshare`. Presence derives from the union across members.
+    char_ids: set[str] = field(default_factory=set)
     connected_at: float = field(default_factory=time.monotonic)
 
 
@@ -77,7 +83,7 @@ class RoomManager:
         return [m for m in self._rooms.get(code, set()) if m.role == "gm"]
 
     def online_char_ids(self, code: str) -> set[str]:
-        return {m.char_id for m in self._rooms.get(code, set()) if m.char_id is not None}
+        return set().union(*(m.char_ids for m in self._rooms.get(code, set())))
 
     async def notify_gms(self, code: str, message: BaseModel) -> None:
         """Broadcast to every live GM. A failed send means a dead socket (app
@@ -103,6 +109,14 @@ class RoomManager:
 
 
 manager = RoomManager()
+
+# Strong refs to detached teardown broadcasts (asyncio only keeps weak ones).
+_pending_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _broadcast_offline(code: str, char_ids: list[str]) -> None:
+    for cid in char_ids:
+        await manager.notify_gms(code, Presence(char_id=cid, online=False))
 
 
 async def _send(ws: WebSocket, model: BaseModel) -> None:
@@ -160,6 +174,16 @@ async def ws_endpoint(ws: WebSocket) -> None:
             await ws.close()
             return
 
+        # Hard v2 gate — v1 clients (charId-bound hello) get a clear error, not
+        # subtly broken multi-share semantics. Checked on the hello only.
+        if hello.v != 2:
+            log.warning(event("bad_frame", stage="hello", reason="unsupported_version", ip=ip))
+            await _error(
+                ws, "unsupported_version", "This server speaks protocol v2; update the app."
+            )
+            await ws.close()
+            return
+
         async with maker() as session:
             campaign = await session.scalar(select(Campaign).where(Campaign.code == hello.code))
             if campaign is None:
@@ -174,32 +198,20 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     await _error(ws, "forbidden", "Bad GM token.")
                     await ws.close()
                     return
-            elif not hello.char_id:
-                log.warning(event("bad_frame", stage="hello", reason="missing_char_id", ip=ip))
-                await _error(ws, "bad_hello", "A player must send charId.")
-                await ws.close()
-                return
 
             code = hello.code
             campaign_id = campaign.id
-            member = Member(ws=ws, role=hello.role, char_id=hello.char_id, campaign_id=campaign_id)
+            member = Member(ws=ws, role=hello.role, campaign_id=campaign_id)
             manager.add(code, member)
-            log.info(
-                event(
-                    "ws_hello",
-                    campaign_id=campaign_id,
-                    role=hello.role,
-                    char=mask_char_id(hello.char_id),
-                    ip=ip,
-                )
-            )
+            log.info(event("ws_hello", campaign_id=campaign_id, role=hello.role, ip=ip))
             info = CampaignInfo(code=campaign.code, name=campaign.name)
             await _send(ws, Welcome(campaign=info, role=hello.role))
 
             if hello.role == "gm":
                 await _send(ws, await _build_roster(session, campaign.id, code))
-            else:
-                await manager.notify_gms(code, Presence(char_id=hello.char_id, online=True))
+            # No presence on a player hello — the session owns no character yet;
+            # "online" is implied by the first `share` (the GM folds an update
+            # into presence).
 
         # Main loop.
         while True:
@@ -240,23 +252,27 @@ async def ws_endpoint(ws: WebSocket) -> None:
                     "ws_closed",
                     campaign_id=member.campaign_id,
                     role=member.role,
-                    char=mask_char_id(member.char_id),
+                    chars=len(member.char_ids),
                     closed_by=closed_by,
                     duration_s=round(time.monotonic() - member.connected_at, 1),
                 )
             )
-            # Only report the slot offline if NO other live socket still holds it.
-            # A mobile client that reconnects (screen lock, network blip) opens a
-            # new socket before the server notices the old half-open one died; the
-            # stale socket's cleanup then lands AFTER the new hello. Broadcasting
-            # unconditionally would mark a connected, actively-sharing player
-            # offline — and nothing would ever flip them back.
-            if (
-                member.role == "player"
-                and member.char_id is not None
-                and member.char_id not in manager.online_char_ids(code)
-            ):
-                await manager.notify_gms(code, Presence(char_id=member.char_id, online=False))
+            # Only report a character offline if NO other live socket still holds
+            # it. A mobile client that reconnects (screen lock, network blip)
+            # opens a new socket before the server notices the old half-open one
+            # died; the stale socket's cleanup then lands AFTER the new hello and
+            # its re-shares. Broadcasting unconditionally would mark a connected,
+            # actively-sharing character offline — and nothing would flip it back.
+            # No role guard: a GM broadcaster socket's PNJs go offline too.
+            still_online = manager.online_char_ids(code)
+            offline = sorted(cid for cid in member.char_ids if cid not in still_online)
+            if offline:
+                # Detached task, NOT awaited: this socket's task is being torn
+                # down and may be cancelled at its next suspension point — an
+                # await here would silently drop all but the first presence.
+                task = asyncio.get_running_loop().create_task(_broadcast_offline(code, offline))
+                _pending_tasks.add(task)
+                task.add_done_callback(_pending_tasks.discard)
 
 
 async def _handle_share(
@@ -267,26 +283,16 @@ async def _handle_share(
     code: str,
     msg: dict,
 ) -> None:
-    """UPSERT the character's latest projection and stream it to the GM."""
+    """UPSERT the character's latest projection and stream it to the GM.
+
+    v2: any authenticated member may share any charId — the join code is the
+    room capability, and within a room all members share one write domain (docs
+    §security). A GM share is a GM-run PNJ (`owner="gm"`)."""
     try:
         share = Share.model_validate(msg)
     except ValidationError:
         log.warning(event("bad_frame", stage="share", reason="bad_share", campaign_id=campaign_id))
         await _error(ws, "bad_share", "Invalid share message.")
-        return
-    # The hello bound this socket to ONE roster slot (charUuid = the write
-    # capability, docs §3/§8). A GM, or a player naming another slot, is refused.
-    if member.role != "player" or share.char_id != member.char_id:
-        log.warning(
-            event(
-                "share_forbidden",
-                campaign_id=campaign_id,
-                role=member.role,
-                joined_as=mask_char_id(member.char_id),
-                targeted=mask_char_id(share.char_id),
-            )
-        )
-        await _error(ws, "forbidden", "You can only share the character you joined with.")
         return
 
     ts = now_ms()
@@ -320,14 +326,24 @@ async def _handle_share(
         # (see config.database_url) needs the pg dialect's insert here.
         stmt = (
             sqlite_insert(Projection)
-            .values(campaign_id=campaign_id, char_id=share.char_id, payload=payload, updated_at=ts)
+            .values(
+                campaign_id=campaign_id,
+                char_id=share.char_id,
+                payload=payload,
+                updated_at=ts,
+                owner=member.role,
+            )
             .on_conflict_do_update(
                 index_elements=[Projection.campaign_id, Projection.char_id],
-                set_={"payload": payload, "updated_at": ts},
+                # owner in set_ too: a re-share by the other role flips it.
+                set_={"payload": payload, "updated_at": ts, "owner": member.role},
             )
         )
         await session.execute(stmt)
         await session.commit()
+
+    # This socket now holds the character — presence derives from it.
+    member.char_ids.add(share.char_id)
 
     # Payload size only — the character sheet itself never reaches a log.
     log.info(
@@ -335,12 +351,14 @@ async def _handle_share(
             "share",
             campaign_id=campaign_id,
             char=mask_char_id(share.char_id),
+            role=member.role,
             new_slot=exists is None,
             bytes=len(payload),
         )
     )
     await manager.notify_gms(
-        code, Update(char_id=share.char_id, character=share.character, updated_at=ts)
+        code,
+        Update(char_id=share.char_id, character=share.character, updated_at=ts, owner=member.role),
     )
 
 
@@ -352,7 +370,10 @@ async def _handle_unshare(
     code: str,
     msg: dict,
 ) -> None:
-    """Purge the character's projection (right-to-erasure) and tell the GM."""
+    """Purge the character's projection (right-to-erasure) and tell the GM.
+
+    v2: any authenticated member may unshare any charId — this is also the GM's
+    kick (purge only, no ban: the owner's next share re-adds the entry)."""
     try:
         unshare = Unshare.model_validate(msg)
     except ValidationError:
@@ -360,18 +381,6 @@ async def _handle_unshare(
             event("bad_frame", stage="unshare", reason="bad_unshare", campaign_id=campaign_id)
         )
         await _error(ws, "bad_unshare", "Invalid unshare message.")
-        return
-    if member.role != "player" or unshare.char_id != member.char_id:
-        log.warning(
-            event(
-                "unshare_forbidden",
-                campaign_id=campaign_id,
-                role=member.role,
-                joined_as=mask_char_id(member.char_id),
-                targeted=mask_char_id(unshare.char_id),
-            )
-        )
-        await _error(ws, "forbidden", "You can only unshare the character you joined with.")
         return
 
     async with maker() as session:
@@ -381,6 +390,11 @@ async def _handle_unshare(
             )
         )
         await session.commit()
+
+    # Sender no longer holds it (no-op when kicking someone else's entry — the
+    # kicked owner's socket keeps its claim, and its eventual disconnect emits a
+    # presence for an entry that is already gone: the GM folds it as a no-op).
+    member.char_ids.discard(unshare.char_id)
 
     # DML always yields a CursorResult (which owns rowcount); the async execute()
     # stub is just typed too widely as Result.
@@ -409,6 +423,7 @@ async def _build_roster(session: AsyncSession, campaign_id: int, code: str) -> R
             character=json.loads(p.payload),
             online=p.char_id in online,
             updated_at=p.updated_at,
+            owner="gm" if p.owner == "gm" else "player",
         )
         for p in rows
     ]

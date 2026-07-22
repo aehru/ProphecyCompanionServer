@@ -40,3 +40,6 @@ class Projection(Base):
     # SharedCharacter as opaque JSON (validated loosely; stored verbatim).
     payload: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[int] = mapped_column(BigInteger, default=now_ms, onupdate=now_ms)
+    # v2: role of the socket that shared this entry ("gm" = a GM-run PNJ). A
+    # re-share by the other role flips it (the UPSERT sets it on every write).
+    owner: Mapped[str] = mapped_column(String(8), nullable=False, server_default="player")

@@ -71,16 +71,18 @@ class DeleteCampaignIn(Wire):
 
 # --- WebSocket: client -> server ---------------------------------------------
 class Hello(Wire):
+    # v2: the hello identifies the DEVICE/SESSION, not a character. Kept as a
+    # plain int (not Literal[2]) so a v1 hello parses and gets a clear
+    # `unsupported_version` error from ws.py instead of an opaque `bad_hello`.
     v: int = 1
     type: Literal["hello"]
     role: Literal["gm", "player"]
     code: str
     gm_token: str | None = None
-    char_id: str | None = None
 
 
 class Share(Wire):
-    v: int = 1
+    v: int = 2
     type: Literal["share"]
     char_id: str
     # Tolerant reader (docs/campaign-protocol.md §4): the projection is stored as
@@ -90,7 +92,7 @@ class Share(Wire):
 
 
 class Unshare(Wire):
-    v: int = 1
+    v: int = 2
     type: Literal["unshare"]
     char_id: str
 
@@ -102,7 +104,7 @@ class CampaignInfo(Wire):
 
 
 class Welcome(Wire):
-    v: int = 1
+    v: int = 2
     type: Literal["welcome"] = "welcome"
     campaign: CampaignInfo
     role: str
@@ -113,42 +115,45 @@ class RosterEntry(Wire):
     character: dict  # the stored SharedCharacter, passed through verbatim
     online: bool
     updated_at: int
+    # v2: who shared this entry — lets the GM UI badge their own PNJs.
+    owner: Literal["gm", "player"]
 
 
 class Roster(Wire):
-    v: int = 1
+    v: int = 2
     type: Literal["roster"] = "roster"
     characters: list[RosterEntry]
 
 
 class Presence(Wire):
-    v: int = 1
+    v: int = 2
     type: Literal["presence"] = "presence"
     char_id: str
     online: bool
 
 
 class Update(Wire):
-    v: int = 1
+    v: int = 2
     type: Literal["update"] = "update"
     char_id: str
     character: dict
     updated_at: int
+    owner: Literal["gm", "player"]
 
 
 class Remove(Wire):
-    v: int = 1
+    v: int = 2
     type: Literal["remove"] = "remove"
     char_id: str
 
 
 class Pong(Wire):
-    v: int = 1
+    v: int = 2
     type: Literal["pong"] = "pong"
 
 
 class ErrorMsg(Wire):
-    v: int = 1
+    v: int = 2
     type: Literal["error"] = "error"
     code: str
     message: str
